@@ -8,6 +8,7 @@ This is a temporary script file.
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_percentage_error # методы оценки ошибки модели
+from xgboost import XGBRegressor
 
 
 # функция для генерации массива данных для x, y, z
