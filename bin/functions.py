@@ -148,7 +148,6 @@ def plot_true_vs_predicted(y_true, y_pred, title="True vs Predicted", figsize=(8
     r2 = r2_score(y_true, y_pred) # коэффициент детерминации
     rmse = np.sqrt(mean_squared_error(y_true, y_pred)) #  среднеквадратическая ошибка
     mape = mean_absolute_percentage_error(y_true, y_pred) # cредняя абсолютная процентная ошибка
-
     # Строим график
     plt.figure(figsize=figsize)
     plt.scatter(y_true, y_pred, alpha=0.6, label='Predictions')
@@ -168,7 +167,6 @@ def plot_true_vs_predicted(y_true, y_pred, title="True vs Predicted", figsize=(8
     plt.tight_layout()
     plt.show()
     
-
 
 class Functions():
     
@@ -317,6 +315,17 @@ class Functions():
             x10**2 - a * np.cos(2 * np.pi * x10),
         ]
         return 10 * 10 + sum(terms)
+    
+    # двадцать вторая функция
+    def rosenbrock_8d(self, x1, x2, x3, x4, x5, x6, x7, x8):
+        """
+        8-мерная функция Розенброка.
+        """
+        coords = [x1, x2, x3, x4, x5, x6, x7, x8]
+        total = 0.0
+        for i in range(7):  # для 8 переменных есть 7 пар
+            total += 100.0 * (coords[i+1] - coords[i]**2)**2 + (1.0 - coords[i])**2
+        return total
           
     
     def set_function(self, function):
@@ -415,6 +424,12 @@ class Functions():
                 self.n_features = 10
                 self.main_function_name = 'rastrigin_10d'
                 
+            case _ if func is Functions.rosenbrock_8d:
+                self.n_features = 8
+                self.main_function_name = 'rosenbrock_8d'
+                
+            
+                
                 
     def get_function_dict(self):
         return {
@@ -438,13 +453,13 @@ class Functions():
             'sin_1d': self.sin_1d,
             'sinusoidal': self.sinusoidal,
             'trigonometric': self.trigonometric,
-            'rastrigin_10d': self.rastrigin_10d
+            'rastrigin_10d': self.rastrigin_10d,
+            'rosenbrock_8d': self.rosenbrock_8d
         }
                 
 
     
 class Matrix_extension ():
-    
     def __init__(self, X_coded):
         
         self.X_coded = X_coded
@@ -551,7 +566,7 @@ class Matrix_extension ():
             self.X_coded_ext = np.hstack(blocks)
         
         # исли признаков больше 9, то запрещаем расширение матрицы признаков
-        elif self.n_features >= 9:
+        elif self.n_features >= 5:
             self.basis_type = 'no_extension'
             blocks = [
                         np.ones((n_samples, 1)),  # столбец единиц
@@ -714,8 +729,8 @@ if __name__ == "__main__":
     names_of_functions =  ['ackley', 'exponential','gaussian','hypersphere_4d','hypersphere_5d','hyperbolic',
                            'linear_1d','linear_2d','linear_4d','linear_5d', 'logarithmic','mixed_2D',
                            'polynomial','product','quadratic','quadratic_1d','rastrigin','sin_1d',
-                           'sinusoidal', 'trigonometric', 'rastrigin_10d']
-    n_samples = 100
+                           'sinusoidal', 'trigonometric', 'rastrigin_10d', 'rosenbrock_8d']
+    n_samples = 52
     problematic_models = {}
     
     i = 0
@@ -725,7 +740,7 @@ if __name__ == "__main__":
             n_samples= n_samples,
             function_name= item,
             matrix_type='lhs',              
-            basis_functions_set='fourier', # возможные варианты: safe, chebyshev, fourier, full, custom, no_extension
+            basis_functions_set='full', # возможные варианты: safe, chebyshev, fourier, full, custom, no_extension
             random_seed=1488
         )
         
