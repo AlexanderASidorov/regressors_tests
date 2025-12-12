@@ -8,144 +8,129 @@ This is a temporary script file.
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_percentage_error # методы оценки ошибки модели
-from xgboost import XGBRegressor
-import itertools
-
-
-# функция для генерации массива данных для x, y, z
-def generate_random_array(n, m, low, high, seed=42):
-    """
-    Генерирует массив размером (n, m) со случайными вещественными числами
-    в диапазоне [low, high).
-    
-    Параметры:
-        n (int): количество строк
-        m (int): количество столбцов
-        low (float): нижняя граница диапазона (включительно)
-        high (float): верхняя граница диапазона (исключительно)
-        seed (int): для воспроизводимости
-    
-    Возвращает:
-        np.ndarray: массив размером (n, m) типа float
-    """
-    rng = np.random.default_rng(seed)
-    return rng.uniform(low, high, size=(n, m))
+from sklearn.linear_model import LinearRegression, LassoCV, Lasso
+import pyDOE3 as doe
 
 
 
 
-
-class Generate_data():
+class Generate_coded_data():
     '''
-    Функции для создания искуственных массивов признаков
+    Класс для создания искуственных массивов признаков
     '''
     
-    def __init__(self, n, m, low, high, seed=42):
+    def __init__(self, function, n_samples, random_seed = None):
         '''
         Параметры:
-        n (int): количество точек (экспериментов)
-        m (int): количество факторов (признаков)
-        low (float или array-like): нижняя граница для каждого признака.
-                            Если скаляр — применяется ко всем признакам.
-        high (float или array-like): верхняя граница для каждого признака.
-                            Если скаляр — применяется ко всем признакам.
-        seed (int): для воспроизводимости
+
         '''
-        self.n = n
-        self.m = m
-        self.low = low
-        self.high = high
-        self.seed = seed
+        self.n_samples = n_samples
+        self.function = function
+        if random_seed is None:
+            self.random_seed = self.function.random_seed
+        else:
+            self.random_seed = int(random_seed)
+            
+        
+        
+        self.matrix_types = ['ff2n', 'pbdesign', 'bbdesign', 'ccdesign', 'lhs', 'random_uniform']
+        self.matrix_type = 'lhs'
+        
+        
+    def set_matrix_type (self, matrix_type):
+        '''
+        Определяем тип матрицы планирования
+        Возможные варианты:
+            ff2n - полный факторный эксперимент
+            pbdesign - матрица Plackett-Burman
+            bbdesign - матрица Box-Behnken
+            ccdesign - матрица Central Composite
+            lhs - матрица Latin-Hypercube
+            
+        '''
+        
+        if matrix_type not in self.matrix_types:
+            raise ValueError (f'Можно выбрать только следующие типы матрицы планирвоания: {self.matrix_types}')
+        else:
+            self.matrix_type = matrix_type
+        
+        rng = np.random.default_rng(self.random_seed)
+             
+        # определяем матрицу планирования в кодированном масштабе
+        match matrix_type:
+            case 'ff2n':
+                self.X_coded = doe.ff2n(self.function.n_features)
+            case 'pbdesign':
+                self.X_coded = doe.pbdesign(self.function.n_features)
+            case 'bbdesign':
+                self.X_coded = doe.bbdesign(self.function.n_features)
+            case 'ccdesign':
+                self.X_coded = doe.ccdesign(self.function.n_features)
+            case 'lhs':
+                
+                X = doe.lhs(self.function.n_features, self.n_samples, seed = rng)
+                self.X_coded = 2 * X - 1
+            case 'random_uniform':
+                self.X_coded = rng.uniform(-1., 1., 
+                            size=(self.n_samples, self.function.n_features))
+                
+  
+        
+class Generate_natural_data():
+    '''
+    Класс для перехода от кодированного к натуральному масштабу и ообратно
+    '''
+    
+    def __init__(self, function, X_coded):
+        '''
+        Параметры:
+        '''
+        self.function = function
+        self.X_coded = X_coded
+        
+        self.target = None
         self.features = None
         
-    
-    # функция для генерации массива данных для x, y, z
-    def generate_random_array(self):
+   
+    def convert_coded_to_natural(self):
         """
-        Генерирует массив размером (n, m) со случайными вещественными числами
-        в диапазоне [low, high).
+        Преобразует матрицу плана из кодированного масштаба в натуральный,
+        при условии, что ВСЕ факторы имеют одинаковые границы [low, high].
         
-               
-        Возвращает:
-            np.ndarray: массив размером (n, m) типа float
         """
-        rng = np.random.default_rng(self.seed)
+        low, high = self.function.limits[0], self.function.limits[1]
+        if low >= high:
+            raise ValueError("low должно быть меньше high")
         
-        self.features = rng.uniform(self.low, self.high, size=(self.n, self.m))
+        # Линейное преобразование: [-1, +1] → [low, high]
+        scale = (high - low) / 2.0
+        center = (high + low) / 2.0
         
-        return self.features
-    
-    # функция для генерации массива в виде латинсского гипер куба
-    def generate_latin_hypercube(self):
+        # создаем матрицу признаков
+        self.features = self.X_coded * scale + center
         
-        rng = np.random.default_rng(self.seed)
+       
+        # Подставляем сгенерированный массив в функцию
+        self.target = self.function.main_function (*self.features.T)
         
-        low = np.full(self.m, self.low) if np.isscalar(self.low) else np.asarray(self.low)
-        high = np.full(self.m, self.high) if np.isscalar(self.high) else np.asarray(self.high)
         
-        if low.shape != (self.m,) or high.shape != (self.m,):
-            raise ValueError("low и high должны быть скалярами или массивами длины m")
-        if np.any(low >= high):
-            raise ValueError("Каждое значение low должно быть строго меньше соответствующего high")
-        
-        samples = np.empty((self.n, self.m))
-        for j in range(self.m):
-            edges = np.linspace(low[j], high[j], self.n + 1)
-            intervals = rng.uniform(edges[:-1], edges[1:])
-            rng.shuffle(intervals)
-            samples[:, j] = intervals
-        
-        self.features = samples  # сохраняем, как в random_array
-        return self.features
-    
-    
-    def generate_full_factorial(self, levels):
+    def convert_natural_to_coded(self):
         """
-        Генерирует полный факторный эксперимент: все возможные комбинации уровней факторов.
+        Преобразует матрицу плана из натурального масштаба в кодированный,
+        при условии, что ВСЕ факторы имеют одинаковые границы [low, high].
         
-        Параметры:
-            levels (int): 
-                - если int: количество уровней для каждого из m факторов,
-        
-        Возвращает:
-            np.ndarray: массив размером (N, m), где N = ∏ levels[i]
         """
-        # Приводим low/high к массивам
-        low = np.full(self.m, self.low) if np.isscalar(self.low) else np.asarray(self.low)
-        high = np.full(self.m, self.high) if np.isscalar(self.high) else np.asarray(self.high)
         
-        if low.shape != (self.m,) or high.shape != (self.m,):
-            raise ValueError("low и high должны быть скалярами или массивами длины m")
-        if np.any(low >= high):
-            raise ValueError("Каждое значение low должно быть строго меньше соответствующего high")
-
-        # Обрабатываем levels
-        if np.isscalar(levels):
-            levels_arr = np.full(self.m, levels, dtype=int)
-        else:
-            levels_arr = np.asarray(levels, dtype=int)
-            if levels_arr.shape != (self.m,):
-                raise ValueError("Параметр 'levels' должен быть int или массивом длины m")
-
-        # Генерируем уровни для каждого фактора
-        factor_levels = []
-        for i in range(self.m):
-            fl = np.linspace(low[i], high[i], num=levels_arr[i])
-            factor_levels.append(fl)
-
-        # Декартово произведение
-        full_design = np.array(list(itertools.product(*factor_levels)))
+        low, high = self.function.limits[0], self.function.limits[1]
+        if low >= high:
+            raise ValueError("low должно быть меньше high")
         
-        # Обновляем n и сохраняем
-        self.n = full_design.shape[0]  # перезаписываем n
-        self.features = full_design
-        return self.features
         
-    
-    
-
-
-
+        scale = (high - low) / 2.0
+        center = (high + low) / 2.0
+        
+        self.X_coded = (self.features - center) / scale
+        
 
 
 # Функция для сравнения тестовых и предсказанных значений
@@ -184,28 +169,25 @@ def plot_true_vs_predicted(y_true, y_pred, title="True vs Predicted", figsize=(8
     plt.show()
     
 
+
 class Functions():
     
     '''
-    Функции для генерации датасетов
+    Функции для определения базовой функции для дальней генерации 
+    искусственного датасета
     '''
     
     def __init__(self):
         
-        self.features = None
-        self.target = None
-        
-        self.function = self.trigonometric
-        self.function_name = 'trigonometric'
-        self.random_seed = 42
+                
+        self.main_function = self.trigonometric
+        self.main_function_name = 'trigonometric'
+        self.random_seed = 1488
         self.n_samples = 1000
         self.n_features = 3
         self.limits = (-10, 10)
         
-        self.generate_random_array()
-        
-
-    
+        #self.generate_random_array()
     
     # первая функция
     def ackley(self, x, y, z):
@@ -218,8 +200,7 @@ class Functions():
     def exponential (self, x, y, z):
         function = np.exp(0.1*x) + np.exp(0.1*y) + np.exp(0.1*z) 
         return function
-    
-    
+     
     # третья функция
     def gaussian (self,x, y):
         function = np.exp(-(x**2 + y**2)/2)
@@ -236,125 +217,546 @@ class Functions():
         function = x1**2 + x2**2 + x3**2 + x4**2 + x5**2
         return function
     
+    
     # шестая функция
+    def hyperbolic (self, x, y, z):
+        function = np.tanh(x) + np.tanh(y) + np.tanh(z)
+        return function
+    
+    # седьмая функция
+    def linear_1d (self, x):
+        function = 2*x + 1
+        return function
+    
+    # восьмая функция
+    def linear_2d (self, x, y):
+        function = x + 2*y + 1
+        return function
+    
+    # девятая функция
+    def linear_4d (self, x1, x2, x3, x4):
+        function = x1 + 2*x2 + 3*x3 + 4*x4 + 1
+        return function
+    
+    
+    # десятая функция
     def linear_5d (self, x1, x2, x3, x4, x5):
         function = x1 + 2*x2 + 3*x3 + 4*x4 + 5*x5 + 1
         return function
     
-    # восьмая функция
+    
+    # одиннадцатая функция
+    def logarithmic (self, x, y, z, c=11):
+        function = np.log(abs(x) + c) + np.log(abs(y) + c) + np.log(abs(z) + c)  
+        return function
+    
+    # двенадцатая функция
+    def mixed_2D (self, x, y):
+        function = x*y + np.sin(x) + np.cos(y)
+        return function
+      
+    # тринадцатая функция
     def polynomial(self, x, y, z):
         function = 1 + 0.5 * (x**2 + y**2 + z**2) + 0.1 * (x**3 + y**3 + z**3)
         return function
     
-    # девятая функция
+    # четырнадцатая функция
     def product (self, x, y, z):
         function = x*y*z
         return function
+    
+    # пятнадцатая функция
+    def quadratic (self, x, y, z):
+        function = x**2 + y**2 + z**2
+        return function
+       
+    # шестнадцатая функция
+    def quadratic_1d (self, x):
+        function = x**2 + 2*x + 1
+        return function
+    
+    # семнадцатая функция
+    def rastrigin (self, x, y, z, c=30, a = 10):
+        term01 = x**2 - a*np.cos(2*np.pi*x)
+        term02 = y**2 - a*np.cos(2*np.pi*y)
+        term03 = z**2 - a*np.cos(2*np.pi*z)
+        function = c + term01 + term02 + term03 
+        return function
+    
+    # восемнадцатая функция
+    def sin_1d (self, x):
+        function = np.sin(2*np.pi*x)
+        return function
+    
+    # девятнадцатая функция
+    def sinusoidal (self, x, y, z):
+        function = np.sin(x) + np.sin(y) + np.sin(z)
+        return function
         
     
-    # десятая функция
+    # двадцатая функция
     def trigonometric (self, x, y, z):
         function = np.sin(x)*np.cos(2*x) + np.sin(y)*np.cos(2*y) + np.sin(z)*np.cos(2*z)
         return function
     
-   
     
+    
+    # двадцать первая функция
+    def rastrigin_10d(self, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10):
+        a = 10
+        terms = [
+            x1**2 - a * np.cos(2 * np.pi * x1),
+            x2**2 - a * np.cos(2 * np.pi * x2),
+            x3**2 - a * np.cos(2 * np.pi * x3),
+            x4**2 - a * np.cos(2 * np.pi * x4),
+            x5**2 - a * np.cos(2 * np.pi * x5),
+            x6**2 - a * np.cos(2 * np.pi * x6),
+            x7**2 - a * np.cos(2 * np.pi * x7),
+            x8**2 - a * np.cos(2 * np.pi * x8),
+            x9**2 - a * np.cos(2 * np.pi * x9),
+            x10**2 - a * np.cos(2 * np.pi * x10),
+        ]
+        return 10 * 10 + sum(terms)
+          
     
     def set_function(self, function):
         
-        self.function = function
+        self.main_function = function
+         
+        func = self.main_function.__func__
     
-        
         # определяем колиство признаков
-        match self.function:
+        match func:
         
-            case _ if self.function is self.ackley:
+            case _ if func is Functions.ackley:
                 self.n_features = 3
-                self.function_name = 'ackley'
+                self.main_function_name = 'ackley'
         
-            case _ if self.function is self.exponential:
+            case _ if func is Functions.exponential:
                 self.n_features = 3
-                self.function_name = 'exponential'
+                self.main_function_name = 'exponential'
         
-            case _ if self.function is self.gaussian:
+            case _ if func is Functions.gaussian:
                self.n_features = 2
-               self.function_name = 'gaussian'    
+               self.main_function_name = 'gaussian'    
             
-            case _ if self.function is self.hypersphere_4d:
+            case _ if func is Functions.hypersphere_4d:
                 self.n_features = 4
-                self.function_name = 'hypersphere_4d'
+                self.main_function_name = 'hypersphere_4d'
             
-            case _ if self.function is self.hypersphere_5d:
+            case _ if func is Functions.hypersphere_5d:
                 self.n_features = 5
-                self.function_name = 'hypersphere_5d'
+                self.main_function_name = 'hypersphere_5d'
                 
-            case _ if self.function is self.linear_5d:
+            case _ if func is Functions.hyperbolic:
+                self.n_features = 3
+                self.main_function_name = 'hyperbolic' 
+                
+            case _ if func is Functions.linear_1d:
+                self.n_features = 1
+                self.main_function_name = 'linear_1d' 
+                
+            case _ if func is Functions.linear_2d:
+                self.n_features = 2
+                self.main_function_name = 'linear_2d'
+                
+            case _ if func is Functions.linear_4d:
+                self.n_features = 4
+                self.main_function_name = 'linear_4d'
+                
+                
+            case _ if func is Functions.linear_5d:
                 self.n_features = 5
-                self.function_name = 'linear_5d'
+                self.main_function_name = 'linear_5d'
             
-            case _ if self.function is self.polynomial:
+            
+            case _ if func is Functions.logarithmic:
                 self.n_features = 3
-                self.function_name = 'polynomial'
-        
-            case _ if self.function is self.product:
+                self.main_function_name = 'logarithmic'
+                
+            case _ if func is Functions.mixed_2D:
+                self.n_features = 2
+                self.main_function_name = 'mixed_2D'
+            
+    
+            case _ if func is Functions.polynomial:
                 self.n_features = 3
-                self.function_name = 'product'
+                self.main_function_name = 'polynomial'
         
-            case _ if self.function is self.trigonometric:
+            case _ if func is Functions.product:
                 self.n_features = 3
-                self.function_name = 'trigonometric'
+                self.main_function_name = 'product'
                 
-        self.generate_random_array()
+            case _ if func is Functions.quadratic:
+                self.n_features = 3
+                self.main_function_name = 'quadratic'
                 
-                 
-    # функция для генерации массива данных для x, y, z
-    def generate_random_array(self):
-        """
-        Генерирует массив размером (n, m) со случайными вещественными числами
-        в диапазоне [low, high).
-        
+            case _ if func is Functions.quadratic_1d:
+                self.n_features = 1
+                self.main_function_name = 'quadratic_1d'
                 
-        Возвращает:
-            np.ndarray: массив размером (n, m) типа float
-        """
+            case _ if func is Functions.rastrigin:
+                self.n_features = 3
+                self.main_function_name = 'rastrigin'
+                
+            case _ if func is Functions.sin_1d:
+                self.n_features = 1
+                self.main_function_name = 'sin_1d'
+                
+            case _ if func is Functions.sinusoidal:
+                self.n_features = 3
+                self.main_function_name = 'sinusoidal'
         
-        seed = self.random_seed
-        low = self.limits[0]
-        high = self.limits[1]
-        n = self.n_samples
-        m = self.n_features
+            case _ if func is Functions.trigonometric:
+                self.n_features = 3
+                self.main_function_name = 'trigonometric'
+                
+            case _ if func is Functions.rastrigin_10d:
+                self.n_features = 10
+                self.main_function_name = 'rastrigin_10d'
+                
+                
+    def get_function_dict(self):
+        return {
+            'ackley': self.ackley,
+            'exponential': self.exponential,
+            'gaussian': self.gaussian,
+            'hypersphere_4d': self.hypersphere_4d,
+            'hypersphere_5d': self.hypersphere_5d,
+            'hyperbolic': self.hyperbolic,
+            'linear_1d': self.linear_1d,
+            'linear_2d': self.linear_2d,
+            'linear_4d': self.linear_4d,
+            'linear_5d': self.linear_5d,
+            'logarithmic': self.logarithmic,
+            'mixed_2D': self.mixed_2D,
+            'polynomial': self.polynomial,
+            'product': self.product,
+            'quadratic': self.quadratic,
+            'quadratic_1d': self.quadratic_1d,
+            'rastrigin': self.rastrigin,
+            'sin_1d': self.sin_1d,
+            'sinusoidal': self.sinusoidal,
+            'trigonometric': self.trigonometric,
+            'rastrigin_10d': self.rastrigin_10d
+        }
+                
+
+    
+class Matrix_extension ():
+    
+    def __init__(self, X_coded):
         
-        # создаем генератор
-        rng = np.random.default_rng(seed)
+        self.X_coded = X_coded
+        self.n_features = X_coded.shape[1]
+        self.basis_functions = None 
+        self.set_basis_functions('safe')
+        self.X_coded_ext = None
+    
+    
+    def set_basis_functions(self, basis_type, include_interactions=True):
+        """Выбор набора базисных функций в зависимости от типа"""
         
-        # создаем матрицу признаков
-        self.features = rng.uniform(low, high, size=(n, m))
-        # Подставляем сгенерированный массив в функцию
-        self.target = self.function (*self.features.T)
+        self.basis_type = basis_type
+        self.include_interactions = include_interactions
         
+        if basis_type == 'safe':
+            # Минимальный безопасный набор
+            self.basis_functions = [
+                lambda x: x**2,
+                lambda x: x**3,
+                lambda x: np.sin(np.pi * x),
+                lambda x: np.cos(np.pi * x),
+                lambda x: np.tanh(x),
+                lambda x: np.exp(-x**2),
+            ]
+            
+        elif basis_type == 'chebyshev':
+            # Полиномы Чебышева (рекомендуется для [-1, 1])
+            self.basis_functions = [
+                lambda x: x,                    # T1
+                lambda x: 2*x**2 - 1,           # T2
+                lambda x: 4*x**3 - 3*x,         # T3
+                lambda x: 8*x**4 - 8*x**2 + 1,  # T4
+                lambda x: 16*x**5 - 20*x**3 + 5*x,  # T5
+            ]
+            
+        elif basis_type == 'fourier':
+            # Тригонометрический базис
+            self.basis_functions = [
+                lambda x: np.sin(np.pi * x),
+                lambda x: np.cos(np.pi * x),
+                lambda x: np.sin(2*np.pi * x),
+                lambda x: np.cos(2*np.pi * x),
+                lambda x: np.sin(3*np.pi * x),
+                lambda x: np.cos(3*np.pi * x),
+            ]
+            
+        elif basis_type == 'full':
+            # Полный гибридный (с осторожностью)
+            self.basis_functions = [
+                # Чебышев
+                lambda x: 2*x**2 - 1,
+                lambda x: 4*x**3 - 3*x,
+                
+                # Фурье
+                lambda x: np.sin(np.pi * x),
+                lambda x: np.cos(np.pi * x),
+                lambda x: np.sin(2*np.pi * x),
+                
+                # Гауссовы
+                lambda x: np.exp(-x**2),
+                lambda x: np.exp(-4*x**2),  # ужече
+                lambda x: x * np.exp(-x**2),  # нечетная
+                
+                # Сигмоиды
+                lambda x: np.tanh(2*x),     # круче
+                lambda x: x / (1 + np.abs(x)),
+            ]
+            
+            
+        elif basis_type == 'custom':
+        # Набор из функции build_custom_features
+            self.basis_functions = [
+                lambda x: x**2,                       # квадрат
+                lambda x: np.sin(x),                  # sin(x)
+                lambda x: np.cos(x),                  # cos(x)
+                lambda x: np.exp(np.clip(x, -5, 5)),  # exp(x) с защитой
+                lambda x: np.tanh(x),                 # tanh(x)
+                lambda x: np.log(np.abs(x) + 1e-6),   # log(|x| + eps)
+            ]
+            
+        elif basis_type == 'no_extension':
+            pass
+            
+
+        else:
+            raise ValueError(f"Unknown basis_type: {basis_type}")
+     
+            
+    def expand_features(self):
+        '''
+        Расширяем пространство
+        '''
+        X = np.asarray(self.X_coded)
+        n_samples = X.shape[0]
+        
+        
+        if self.basis_type == 'no_extension':
+            
+            blocks = [
+                        np.ones((n_samples, 1)),  # столбец единиц
+                        X                         # исходные признаки
+                        ]
+            self.X_coded_ext = np.hstack(blocks)
+        
+        # исли признаков больше 9, то запрещаем расширение матрицы признаков
+        elif self.n_features >= 9:
+            self.basis_type = 'no_extension'
+            blocks = [
+                        np.ones((n_samples, 1)),  # столбец единиц
+                        X                         # исходные признаки
+                        ]
+            self.X_coded_ext = np.hstack(blocks)
+            
+        
+            
+        
+        else:
+                      
+            # Создаем список блоков
+            blocks = [
+                np.ones((n_samples, 1)),  # столбец единиц
+                X                         # исходные признаки
+            ]
+            
+            # Базисные функции
+            for func in self.basis_functions:
+                X_new = func(X)
+                X_new = np.nan_to_num(X_new, nan=0.0, posinf=1.0, neginf=-1.0)
+                blocks.append(X_new)
+            
+            # Взаимодействия
+            if self.include_interactions and X.shape[1] >= 2:
+                for i in range(X.shape[1]):
+                    for j in range(i+1, X.shape[1]):
+                        blocks.append(X[:, [i]] * X[:, [j]])  # проще со срезами
+            
+            self.X_coded_ext = np.hstack(blocks)
+        
+        
+
+
+def run_experiment(
+                    n_samples=200,
+                    function_name='hyperbolic',
+                    matrix_type='lhs',
+                    basis_functions_set='full',
+                    random_seed=1488,
+                    test_ratio=0.25,
+                    use_lasso=False,
+                    lasso_cv=5,
+                    plot_title_prefix='Тестирование поверхности отклика',
+                    print_recap = True
+                ):
+    """
+    Запускает полный цикл генерации данных, обучения модели и визуализации результата.
+
+    Параметры:
+        n_samples (int): Количество обучающих точек.
+        function_name (str): Название функции из доступного списка.
+        matrix_type (str): Тип матрицы планирования ('ff2n', 'pbdesign', 'bbdesign', 'ccdesign', 'lhs', 'random_uniform').
+        basis_functions_set (str): Набор базисных функций ('safe', 'chebyshev', 'fourier', 'full', 'custom').
+        random_seed (int): Фиксированный seed для воспроизводимости.
+        test_ratio (float): Доля тестовых данных относительно обучающих (например, 0.25 → 25%).
+        use_lasso (bool): Использовать LassoCV вместо LinearRegression.
+        lasso_cv (int): Число фолдов для кросс-валидации в LassoCV.
+        plot_title_prefix (str): Префикс заголовка графика.
+
+    Возвращает:
+        model: обученная модель.
+        r2: коэффициент детерминации на тесте.
+    """
+   
+
+    # --- Инициализация функции ---
+    main_function = Functions()
+    main_function.random_seed = random_seed
+    functions = main_function.get_function_dict()
+    if function_name not in functions:
+        raise ValueError(f"Неизвестная функция: {function_name}. Доступные: {list(functions.keys())}")
+    main_function.set_function(functions[function_name])
+
+    n_test_samples = int(n_samples * test_ratio)
+
+    # --- Обучающая выборка ---
+    training_matrix = Generate_coded_data(main_function, n_samples, random_seed=random_seed)
+    training_matrix.set_matrix_type(matrix_type)
+    training_X_coded = training_matrix.X_coded
+
+    training_data = Generate_natural_data(main_function, training_X_coded)
+    training_data.convert_coded_to_natural()
+    training_features = training_data.features
+    training_target = training_data.target
+
+    # --- Расширение признаков ---
+    basis_functions = Matrix_extension(training_X_coded)
+    basis_functions.set_basis_functions(basis_functions_set)
+    basis_functions.expand_features()
+    X_coded_ext_training = basis_functions.X_coded_ext
+
+    # --- Обучение модели ---
+    if use_lasso:
+        model = LassoCV(cv=lasso_cv, random_state=random_seed, max_iter=10000)
+    else:
+        model = LinearRegression(fit_intercept=False)
+    model.fit(X_coded_ext_training, training_target)
+
+    # --- Тестовая выборка ---
+    testing_matrix = Generate_coded_data(main_function, n_test_samples, random_seed=random_seed)
+    testing_matrix.set_matrix_type('random_uniform')
+    testing_X_coded = testing_matrix.X_coded
+
+    testing_data = Generate_natural_data(main_function, testing_X_coded)
+    testing_data.convert_coded_to_natural()
+    testing_features = testing_data.features
+    testing_target = testing_data.target
+
+    testing_basis_functions = Matrix_extension(testing_X_coded)
+    testing_basis_functions.set_basis_functions(basis_functions_set)
+    testing_basis_functions.expand_features()
+    X_coded_ext_testing = testing_basis_functions.X_coded_ext
+
+    testing_target_model = model.predict(X_coded_ext_testing)
+
+    # --- Визуализация и метрика ---
+    plot_true_vs_predicted(
+        testing_target,
+        testing_target_model,
+        title=f"{plot_title_prefix}. Функция {main_function.main_function_name}"
+    )
+
+    r2 = r2_score(testing_target, testing_target_model)
+    
+    if print_recap:
+        print (f'Тип функции: {function_name}, Количество экспериментов: {n_samples}, R² = {r2:.4f}')
+    
+    initial_data = {'function_name': function_name,
+                    'training_X_coded': training_X_coded, 
+                    'training_features':training_features, 
+                    'training_target': training_target,
+                    'X_coded_ext_training': X_coded_ext_training,
+                    'testing_X_coded': testing_X_coded,
+                    'testing_features': testing_features,
+                    'testing_target': testing_target,
+                    'X_coded_ext_testing': X_coded_ext_testing
+                    }
+    
+    return model, r2, initial_data  
+
+
+
+
         
         
         
 if __name__ == "__main__":
     
-    # Исходные данные
-    # создаем объект класса Functions 
-    main_function = Functions()
+    # Тип функции нужно выбрать из следующего списка:
+    """
+     ackley', 'exponential','gaussian','hypersphere_4d','hypersphere_5d','hyperbolic',
+    'linear_1d','linear_2d','linear_4d','linear_5d', 'logarithmic','mixed_2D',
+    'polynomial','product','quadratic','quadratic_1d','rastrigin','sin_1d',
+    'sinusoidal', 'trigonometric', 'rastrigin_10d'
+    """
     
     
-    # определяем количетсво строк для обучения
-    main_function.n_samples = 1000
+    names_of_functions =  ['ackley', 'exponential','gaussian','hypersphere_4d','hypersphere_5d','hyperbolic',
+                           'linear_1d','linear_2d','linear_4d','linear_5d', 'logarithmic','mixed_2D',
+                           'polynomial','product','quadratic','quadratic_1d','rastrigin','sin_1d',
+                           'sinusoidal', 'trigonometric', 'rastrigin_10d']
+    n_samples = 100
+    problematic_models = {}
     
-    # пределы варьирования признаков
-    main_function.limits = (-10, 10)
+    i = 0
     
-    # определяем вид функции
-    main_function.set_function(main_function.trigonometric)
-    
-            
+    for item in names_of_functions:
+        model, r2, initial_data = run_experiment(
+            n_samples= n_samples,
+            function_name= item,
+            matrix_type='lhs',              
+            basis_functions_set='fourier', # возможные варианты: safe, chebyshev, fourier, full, custom, no_extension
+            random_seed=1488
+        )
         
+        if r2<0.8:
+            i+=1
+            problematic_models[item] = r2
             
-    data_generator = Generate_data(27, 3, -10, 10, seed = 42)
-    hyper_cube = data_generator.generate_latin_hypercube()
+    print('################')
+    print('################')
+    print (f'Проблемные модели при {n_samples} экспериментах ({i} моделей) :') 
+    print (problematic_models)
     
+        
+        
+    
+    
+
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
     
