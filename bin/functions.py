@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_percentage_error # методы оценки ошибки модели
 from sklearn.linear_model import LinearRegression, LassoCV, Lasso
 import pyDOE3 as doe
+from pyDOE3.doe_optimal import *
 
 
 
@@ -31,13 +32,14 @@ class Generate_coded_data():
         else:
             self.random_seed = int(random_seed)
             
+
         
         
-        self.matrix_types = ['ff2n', 'pbdesign', 'bbdesign', 'ccdesign', 'lhs', 'random_uniform']
+        self.matrix_types = ['ff2n', 'pbdesign', 'bbdesign', 'ccdesign', 'lhs', 'random_uniform', 'd_eff', 'pbdesign']
         self.matrix_type = 'lhs'
         
         
-    def set_matrix_type (self, matrix_type):
+    def set_matrix_type (self, matrix_type, degree = 1):
         '''
         Определяем тип матрицы планирования
         Возможные варианты:
@@ -46,7 +48,9 @@ class Generate_coded_data():
             bbdesign - матрица Box-Behnken
             ccdesign - матрица Central Composite
             lhs - матрица Latin-Hypercube
-            
+            random_uniform - случайные числа с нормальным распределением
+            d_eff - D - оптимизированная матрица
+            pbdesign - матрица Плакетта-Бермана
         '''
         
         if matrix_type not in self.matrix_types:
@@ -73,6 +77,40 @@ class Generate_coded_data():
             case 'random_uniform':
                 self.X_coded = rng.uniform(-1., 1., 
                             size=(self.n_samples, self.function.n_features))
+                
+            case 'd_eff':
+                n_levels=3
+                n_factors=self.function.n_features
+                            
+                                
+                
+                X = generate_candidate_set(n_factors=n_factors, 
+                                           n_levels=n_levels,
+                                           grid_type = "full_factorial")
+                j = 0
+                step = 5
+                n_points = int(self.n_samples - step)
+                
+                while j <= 5:
+                    n_points += step
+                    design, info = optimal_design(candidates = X,
+                                                  n_points=n_points,
+                                                  degree=degree,
+                                                  criterion="D",
+                                                  method="detmax")
+                    
+                    d_efficiency = info['D_eff']/100
+                    j+=1
+                    if d_efficiency >= 0.9:
+                        break
+                    
+                self.X_coded = design
+                
+            case 'pbdesign':
+               self.X_coded = doe.pbdesign(self.function.n_features)
+                
+                    
+        
                 
   
         
@@ -145,6 +183,7 @@ def plot_true_vs_predicted(y_true, y_pred, title="True vs Predicted", figsize=(8
         figsize (tuple): Размер графика
     """
     # Вычисляем метрики
+    r = np.corrcoef(y_true, y_pred)[0, 1] # коэффициент корреляции
     r2 = r2_score(y_true, y_pred) # коэффициент детерминации
     rmse = np.sqrt(mean_squared_error(y_true, y_pred)) #  среднеквадратическая ошибка
     mape = mean_absolute_percentage_error(y_true, y_pred) # cредняя абсолютная процентная ошибка
@@ -154,7 +193,7 @@ def plot_true_vs_predicted(y_true, y_pred, title="True vs Predicted", figsize=(8
     plt.plot([min(y_true), max(y_true)], [min(y_true), max(y_true)], 'r--', lw=2, label='Ideal line')
 
     # Добавляем метрики на график
-    metrics_text = f'R² = {r2:.3f}\nRMSE = {rmse:.3f}\nMAPE = {mape*100:.3f}%'
+    metrics_text = f'R = {r:.3f}\nR² = {r2:.3f}\nRMSE = {rmse:.3f}\nMAPE = {mape*100:.3f}%'
     plt.text(0.05, 0.95, metrics_text, transform=plt.gca().transAxes,
              fontsize=12, verticalalignment='top', bbox=dict(boxstyle="round", alpha=0.1))
 
@@ -326,6 +365,36 @@ class Functions():
         for i in range(7):  # для 8 переменных есть 7 пар
             total += 100.0 * (coords[i+1] - coords[i]**2)**2 + (1.0 - coords[i])**2
         return total
+    
+    # двадцать вторая функция
+    def ridge_demo_8d(self, x1, x2, x3, x4, x5, x6, x7, x8):
+        """
+       Демонстрационная функция для Ridge-регрессии (8 переменных).
+        
+        Содержит:
+        - сильную мультиколлинеарность между x1, x2, x3 (почти одинаковые),
+        - зависимость от их среднего: mean(x1,x2,x3),
+        - квадратичный член: mean(x1,x2,x3)^2,
+        - два взаимодействия: x4*x5 и x6*x7,
+        - один шумовой признак x8 (не влияет на выход).
+        
+        При расширении до полинома 2-го порядка возникает сильная
+        мультиколлинеарность между x1, x2, x3, x1^2, x1*x2, x2*x3 и т.д.,
+        что делает Ridge-регрессию значительно эффективнее OLS.
+        """
+        # Среднее почти идентичных признаков
+        m = (x1 + x2 + x3) / 3.0
+        
+        # Квадрат среднего
+        term1 = 2.0 * m + 0.7 * (m ** 2)
+        
+        # Взаимодействия
+        term2 = 1.1 * (x4 * x5)
+        term3 = 0.9 * (x6 * x7)
+        
+        # x8 не участвует
+        
+        return term1 + term2 + term3
           
     
     def set_function(self, function):
@@ -428,6 +497,11 @@ class Functions():
                 self.n_features = 8
                 self.main_function_name = 'rosenbrock_8d'
                 
+            case _ if func is Functions.ridge_demo_8d:
+                self.n_features = 8
+                self.main_function_name = 'ridge_demo_8d'
+                
+                
             
                 
                 
@@ -454,7 +528,8 @@ class Functions():
             'sinusoidal': self.sinusoidal,
             'trigonometric': self.trigonometric,
             'rastrigin_10d': self.rastrigin_10d,
-            'rosenbrock_8d': self.rosenbrock_8d
+            'rosenbrock_8d': self.rosenbrock_8d,
+            'ridge_demo_8d': self.ridge_demo_8d
         }
                 
 
@@ -543,8 +618,6 @@ class Matrix_extension ():
             
         elif basis_type == 'no_extension':
             pass
-            
-
         else:
             raise ValueError(f"Unknown basis_type: {basis_type}")
      
@@ -565,7 +638,7 @@ class Matrix_extension ():
                         ]
             self.X_coded_ext = np.hstack(blocks)
         
-        # исли признаков больше 9, то запрещаем расширение матрицы признаков
+        # исли признаков больше 5, то запрещаем расширение матрицы признаков
         elif self.n_features >= 5:
             self.basis_type = 'no_extension'
             blocks = [
@@ -713,7 +786,7 @@ def run_experiment(
 
 
         
-        
+ #%%       
         
 if __name__ == "__main__":
     
@@ -729,7 +802,7 @@ if __name__ == "__main__":
     names_of_functions =  ['ackley', 'exponential','gaussian','hypersphere_4d','hypersphere_5d','hyperbolic',
                            'linear_1d','linear_2d','linear_4d','linear_5d', 'logarithmic','mixed_2D',
                            'polynomial','product','quadratic','quadratic_1d','rastrigin','sin_1d',
-                           'sinusoidal', 'trigonometric', 'rastrigin_10d', 'rosenbrock_8d']
+                           'sinusoidal', 'trigonometric', 'rastrigin_10d', 'rosenbrock_8d', 'ridge_demo_8d']
     n_samples = 52
     problematic_models = {}
     
@@ -753,22 +826,25 @@ if __name__ == "__main__":
     print (f'Проблемные модели при {n_samples} экспериментах ({i} моделей) :') 
     print (problematic_models)
     
+    
+ #%%   
+    model, r2, initial_data = run_experiment(n_samples= n_samples,
+                                             function_name= 'rosenbrock_8d',
+                                             matrix_type='pbdesign',              
+                                             basis_functions_set='no_extension', # возможные варианты: safe, chebyshev, fourier, full, custom, no_extension
+                                             random_seed=1488
+                                             )
+    
         
         
-    
-    
+#%%%
 
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+    # Пример: L9(3^4) — 9 экспериментов, 4 фактора, 3 уровня
+    oa = doe.get_orthogonal_array("L8(2^7)")  # возвращает массив с уровнями 1, 2, 3
+
+    # Преобразуем в 0, 1, 2 (если нужно для моделирования)
+    oa_zero_based = oa - 1
+
     
     
     
